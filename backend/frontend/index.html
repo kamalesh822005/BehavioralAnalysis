@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>BLATS - Behavioral Log Analysis & Trust Scoring</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 220px;
+      background: #1a1d27;
+      border-right: 1px solid #2d3148;
+      display: flex;
+      flex-direction: column;
+      padding: 24px 0;
+      position: fixed;
+      top: 0; left: 0;
+      height: 100vh;
+    }
+    .sidebar-logo {
+      padding: 0 20px 24px;
+      font-size: 20px;
+      font-weight: 700;
+      color: #7c6af7;
+      letter-spacing: 1px;
+      border-bottom: 1px solid #2d3148;
+    }
+    .sidebar-logo span { color: #a78bfa; }
+    .nav-item {
+      padding: 12px 20px;
+      cursor: pointer;
+      color: #94a3b8;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.2s;
+      border-left: 3px solid transparent;
+    }
+    .nav-item:hover { background: #252840; color: #e2e8f0; }
+    .nav-item.active {
+      background: #252840;
+      color: #a78bfa;
+      border-left-color: #7c6af7;
+    }
+    .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+    /* ── Main ── */
+    .main {
+      margin-left: 220px;
+      flex: 1;
+      padding: 28px;
+      overflow-y: auto;
+    }
+    .page { display: none; }
+    .page.active { display: block; }
+
+    .page-title {
+      font-size: 22px;
+      font-weight: 600;
+      margin-bottom: 24px;
+      color: #f1f5f9;
+    }
+
+    /* ── Stat cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+    .card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .card-label { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
+    .card-value { font-size: 32px; font-weight: 700; margin: 6px 0 4px; }
+    .card-sub { font-size: 12px; color: #64748b; }
+    .card.blue  .card-value { color: #60a5fa; }
+    .card.green .card-value { color: #34d399; }
+    .card.yellow .card-value { color: #fbbf24; }
+    .card.red   .card-value { color: #f87171; }
+    .card.purple .card-value { color: #a78bfa; }
+
+    /* ── Charts row ── */
+    .charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    .chart-box {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .chart-box.wide { grid-column: 1 / -1; }
+    .chart-title { font-size: 14px; font-weight: 600; color: #94a3b8; margin-bottom: 14px; }
+    .chart-box canvas { max-height: 220px; }
+
+    /* ── Table ── */
+    .table-box {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+    .table-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #94a3b8;
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .live-dot {
+      width: 8px; height: 8px;
+      background: #34d399;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      color: #64748b;
+      font-weight: 500;
+      border-bottom: 1px solid #2d3148;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+    td { padding: 9px 12px; border-bottom: 1px solid #1e2235; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #1e2235; }
+
+    /* ── Badges ── */
+    .badge {
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-high   { background: #3b0f0f; color: #f87171; }
+    .badge-medium { background: #3b2a0a; color: #fbbf24; }
+    .badge-low    { background: #0a2e1e; color: #34d399; }
+    .badge-info   { background: #0f1e3b; color: #60a5fa; }
+
+    .risk-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: #2d3148;
+      width: 80px;
+      display: inline-block;
+      vertical-align: middle;
+      position: relative;
+    }
+    .risk-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.3s;
+    }
+
+    /* ── Trust scores ── */
+    .user-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .user-card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .user-name { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+    .user-status { font-size: 11px; margin-bottom: 12px; }
+    .status-trusted { color: #34d399; }
+    .status-watch   { color: #fbbf24; }
+    .status-risky   { color: #f87171; }
+    .trust-bar-bg {
+      height: 8px;
+      background: #2d3148;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 6px;
+    }
+    .trust-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s; }
+    .trust-score-label { font-size: 12px; color: #64748b; }
+
+    /* ── No data ── */
+    .no-data {
+      text-align: center;
+      padding: 40px;
+      color: #64748b;
+      font-size: 13px;
+    }
+
+    .refresh-note {
+      font-size: 11px;
+      color: #475569;
+      text-align: right;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Sidebar ── -->
+<nav class="sidebar">
+  <div class="sidebar-logo">BL<span>ATS</span></div>
+  <div class="nav-item active" onclick="showPage('overview', this)">
+    <span class="nav-icon">⬛</span> Overview
+  </div>
+  <div class="nav-item" onclick="showPage('login', this)">
+    <span class="nav-icon">🔑</span> Login Activity
+  </div>
+  <div class="nav-item" onclick="showPage('network', this)">
+    <span class="nav-icon">🌐</span> Network Activity
+  </div>
+  <div class="nav-item" onclick="showPage('endpoint', this)">
+    <span class="nav-icon">🖥</span> Endpoint Activity
+  </div>
+  <div class="nav-item" onclick="showPage('users', this)">
+    <span class="nav-icon">👤</span> Trust Scores
+  </div>
+</nav>
+
+<!-- ── Main ── -->
+<main class="main">
+
+  <!-- OVERVIEW -->
+  <div id="page-overview" class="page active">
+    <div class="page-title">Overview</div>
+    <div class="cards">
+      <div class="card blue">
+        <div class="card-label">Total Events</div>
+        <div class="card-value" id="ov-total">—</div>
+        <div class="card-sub">all categories</div>
+      </div>
+      <div class="card green">
+        <div class="card-label">Login Events</div>
+        <div class="card-value" id="ov-login">—</div>
+        <div class="card-sub">auth activity</div>
+      </div>
+      <div class="card purple">
+        <div class="card-label">Network Events</div>
+        <div class="card-value" id="ov-network">—</div>
+        <div class="card-sub">suricata flows</div>
+      </div>
+      <div class="card yellow">
+        <div class="card-label">Endpoint Events</div>
+        <div class="card-value" id="ov-endpoint">—</div>
+        <div class="card-sub">sudo / firewall</div>
+      </div>
+      <div class="card red">
+        <div class="card-label">High Risk</div>
+        <div class="card-value" id="ov-highrisk">—</div>
+        <div class="card-sub">risk score ≥ 60</div>
+      </div>
+    </div>
+
+    <div class="charts-row">
+      <div class="chart-box">
+        <div class="chart-title">Events by Category</div>
+        <canvas id="chart-category"></canvas>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Risk Distribution</div>
+        <canvas id="chart-risk-dist"></canvas>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <div class="table-title">
+        <span><span class="live-dot"></span>Recent Events (live)</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>User</th><th>Event</th>
+            <th>Category</th><th>Rule Risk</th><th>ML Risk</th>
+            <th>Final Risk</th><th>Trust Score</th>
+          </tr>
+        </thead>
+        <tbody id="ov-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- LOGIN -->
+  <div id="page-login" class="page">
+    <div class="page-title">Login Activity</div>
+    <div class="cards">
+      <div class="card green">
+        <div class="card-label">Successful Logins</div>
+        <div class="card-value" id="lg-success">—</div>
+      </div>
+      <div class="card red">
+        <div class="card-label">Failed Logins</div>
+        <div class="card-value" id="lg-failed">—</div>
+      </div>
+      <div class="card yellow">
+        <div class="card-label">GUI Logins</div>
+        <div class="card-value" id="lg-gui">—</div>
+      </div>
+      <div class="card blue">
+        <div class="card-label">After Hours</div>
+        <div class="card-value" id="lg-afterhours">—</div>
+        <div class="card-sub">anomalous timing</div>
+      </div>
+    </div>
+
+    <div class="charts-row">
+      <div class="chart-box">
+        <div class="chart-title">Login Events Breakdown</div>
+        <canvas id="chart-login-types"></canvas>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Login Risk Scores</div>
+        <canvas id="chart-login-risk"></canvas>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <div class="table-title">
+        <span><span class="live-dot"></span>Login Events</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>User</th><th>Event</th>
+            <th>Source IP</th><th>Severity</th><th>ML Risk</th>
+            <th>Final Risk</th><th>Trust</th>
+          </tr>
+        </thead>
+        <tbody id="login-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- NETWORK -->
+  <div id="page-network" class="page">
+    <div class="page-title">Network Activity</div>
+    <div class="cards">
+      <div class="card blue">
+        <div class="card-label">DNS Queries</div>
+        <div class="card-value" id="net-dns">—</div>
+      </div>
+      <div class="card green">
+        <div class="card-label">HTTP Events</div>
+        <div class="card-value" id="net-http">—</div>
+      </div>
+      <div class="card purple">
+        <div class="card-label">Flow Events</div>
+        <div class="card-value" id="net-flow">—</div>
+      </div>
+      <div class="card red">
+        <div class="card-label">Alerts</div>
+        <div class="card-value" id="net-alert">—</div>
+        <div class="card-sub">suricata IDS</div>
+      </div>
+    </div>
+
+    <div class="charts-row">
+      <div class="chart-box">
+        <div class="chart-title">Event Type Distribution</div>
+        <canvas id="chart-net-types"></canvas>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Network Risk Over Time</div>
+        <canvas id="chart-net-risk"></canvas>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <div class="table-title">
+        <span><span class="live-dot"></span>Network Events</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>Type</th><th>Src IP</th>
+            <th>Dest IP</th><th>Port</th><th>Severity</th>
+            <th>ML Risk</th><th>Final Risk</th>
+          </tr>
+        </thead>
+        <tbody id="network-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ENDPOINT -->
+  <div id="page-endpoint" class="page">
+    <div class="page-title">Endpoint Activity</div>
+    <div class="cards">
+      <div class="card yellow">
+        <div class="card-label">Sudo Commands</div>
+        <div class="card-value" id="ep-sudo">—</div>
+      </div>
+      <div class="card red">
+        <div class="card-label">Firewall Changes</div>
+        <div class="card-value" id="ep-fw">—</div>
+      </div>
+      <div class="card blue">
+        <div class="card-label">Unique Users</div>
+        <div class="card-value" id="ep-users">—</div>
+      </div>
+      <div class="card purple">
+        <div class="card-label">High Risk Actions</div>
+        <div class="card-value" id="ep-highrisk">—</div>
+      </div>
+    </div>
+
+    <div class="charts-row">
+      <div class="chart-box">
+        <div class="chart-title">Command Types</div>
+        <canvas id="chart-ep-types"></canvas>
+      </div>
+      <div class="chart-box">
+        <div class="chart-title">Risk by User</div>
+        <canvas id="chart-ep-users"></canvas>
+      </div>
+    </div>
+
+    <div class="table-box">
+      <div class="table-title">
+        <span><span class="live-dot"></span>Endpoint Events</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>User</th><th>Event</th>
+            <th>Command</th><th>Severity</th>
+            <th>ML Risk</th><th>Final Risk</th><th>Trust</th>
+          </tr>
+        </thead>
+        <tbody id="endpoint-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TRUST SCORES -->
+  <div id="page-users" class="page">
+    <div class="page-title">User Trust Scores</div>
+    <div class="refresh-note">Auto-refreshes every 5 seconds</div>
+    <div class="user-grid" id="user-cards"></div>
+
+    <div class="table-box">
+      <div class="table-title">User Details</div>
+      <table>
+        <thead>
+          <tr>
+            <th>User</th><th>Trust Score</th><th>Status</th>
+            <th>Events</th><th>Last Event</th><th>Last Risk</th>
+          </tr>
+        </thead>
+        <tbody id="users-table"></tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<script>
+const API = 'http://127.0.0.1:8000';
+
+// ── Page navigation ──────────────────────────────────────────────────────────
+function showPage(name, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  el.classList.add('active');
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function fmt(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return isNaN(d) ? ts : d.toLocaleTimeString();
+}
+
+function riskColor(r) {
+  if (r >= 70) return '#f87171';
+  if (r >= 50) return '#fbbf24';
+  if (r >= 30) return '#60a5fa';
+  return '#34d399';
+}
+
+function trustColor(s) {
+  if (s >= 75) return '#34d399';
+  if (s >= 40) return '#fbbf24';
+  return '#f87171';
+}
+
+function severityBadge(s) {
+  const cls = s === 'high' ? 'badge-high' : s === 'medium' ? 'badge-medium' : 'badge-low';
+  return `<span class="badge ${cls}">${s || 'low'}</span>`;
+}
+
+function riskBar(r) {
+  const c = riskColor(r || 0);
+  return `<span class="risk-bar"><span class="risk-fill" style="width:${r||0}%;background:${c}"></span></span> ${r||0}`;
+}
+
+function truncate(s, n=40) {
+  if (!s) return '—';
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+// ── Charts ───────────────────────────────────────────────────────────────────
+const chartDefaults = {
+  plugins: { legend: { labels: { color: '#94a3b8', font: { size: 12 } } } },
+  scales: {
+    x: { ticks: { color: '#64748b' }, grid: { color: '#1e2235' } },
+    y: { ticks: { color: '#64748b' }, grid: { color: '#1e2235' } },
+  }
+};
+
+const doughnutDefaults = {
+  plugins: { legend: { labels: { color: '#94a3b8', font: { size: 12 } } } }
+};
+
+let charts = {};
+
+function mkDoughnut(id, labels, data, colors) {
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] },
+    options: { ...doughnutDefaults, cutout: '65%' }
+  });
+}
+
+function mkBar(id, labels, data, color, label) {
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{ label, data, backgroundColor: color, borderRadius: 4 }]
+    },
+    options: { ...chartDefaults, plugins: { legend: { display: false } } }
+  });
+}
+
+function mkLine(id, labels, data, color, label) {
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label, data, borderColor: color,
+        backgroundColor: color + '22',
+        tension: 0.3, fill: true, pointRadius: 2
+      }]
+    },
+    options: { ...chartDefaults, plugins: { legend: { display: false } } }
+  });
+}
+
+// ── Overview ─────────────────────────────────────────────────────────────────
+async function refreshOverview() {
+  const [dash, evs] = await Promise.all([
+    fetch(API + '/dashboard').then(r => r.json()).catch(() => ({})),
+    fetch(API + '/events').then(r => r.json()).catch(() => [])
+  ]);
+
+  document.getElementById('ov-total').textContent     = dash.total_events ?? evs.length;
+  document.getElementById('ov-login').textContent     = dash.login_events ?? '—';
+  document.getElementById('ov-network').textContent   = dash.network_events ?? '—';
+  document.getElementById('ov-endpoint').textContent  = dash.endpoint_events ?? '—';
+  document.getElementById('ov-highrisk').textContent  = dash.high_risk_events ?? '—';
+
+  // category doughnut
+  mkDoughnut('chart-category',
+    ['Login', 'Network', 'Endpoint'],
+    [dash.login_events||0, dash.network_events||0, dash.endpoint_events||0],
+    ['#34d399','#60a5fa','#fbbf24']
+  );
+
+  // risk distribution
+  const buckets = [0,0,0,0]; // low <30, med 30-50, high 50-70, crit 70+
+  evs.forEach(e => {
+    const r = e.final_risk || 0;
+    if (r >= 70) buckets[3]++;
+    else if (r >= 50) buckets[2]++;
+    else if (r >= 30) buckets[1]++;
+    else buckets[0]++;
+  });
+  mkDoughnut('chart-risk-dist',
+    ['Low (<30)', 'Medium (30-50)', 'High (50-70)', 'Critical (70+)'],
+    buckets,
+    ['#34d399','#60a5fa','#fbbf24','#f87171']
+  );
+
+  // table
+  const tb = document.getElementById('ov-table');
+  const recent = [...evs].reverse().slice(0, 30);
+  tb.innerHTML = recent.length ? recent.map(e => `
+    <tr>
+      <td>${fmt(e.timestamp)}</td>
+      <td>${e.user_id||'—'}</td>
+      <td>${e.event_name||'—'}</td>
+      <td>${e.category||'—'}</td>
+      <td>${riskBar(e.rule_risk)}</td>
+      <td style="color:${riskColor(e.ml_login_risk||e.ml_network_risk||e.ml_endpoint_risk||0)}">${e.ml_login_risk||e.ml_network_risk||e.ml_endpoint_risk||0}</td>
+      <td>${riskBar(e.final_risk)}</td>
+      <td style="color:${trustColor(e.trust_score)}">${e.trust_score??'—'}</td>
+    </tr>`).join('') : '<tr><td colspan="8" class="no-data">No events yet</td></tr>';
+}
+
+// ── Login ─────────────────────────────────────────────────────────────────────
+async function refreshLogin() {
+  const evs = await fetch(API + '/events/login').then(r => r.json()).catch(() => []);
+
+  const success    = evs.filter(e => e.event_name === 'login_success').length;
+  const failed     = evs.filter(e => e.event_name === 'login_failed').length;
+  const gui        = evs.filter(e => e.event_name === 'gui_login_success').length;
+  const afterHours = evs.filter(e => {
+    const h = e.timestamp ? new Date(e.timestamp).getHours() : -1;
+    return h < 8 || h > 18;
+  }).length;
+
+  document.getElementById('lg-success').textContent    = success;
+  document.getElementById('lg-failed').textContent     = failed;
+  document.getElementById('lg-gui').textContent        = gui;
+  document.getElementById('lg-afterhours').textContent = afterHours;
+
+  // breakdown doughnut
+  const types = {};
+  evs.forEach(e => { types[e.event_name||'unknown'] = (types[e.event_name||'unknown']||0)+1; });
+  mkDoughnut('chart-login-types', Object.keys(types), Object.values(types),
+    ['#34d399','#f87171','#60a5fa','#fbbf24','#a78bfa']);
+
+  // risk bar chart
+  const riskLabels = evs.slice(-20).map((e,i) => i+1+'');
+  const riskData   = evs.slice(-20).map(e => e.final_risk||0);
+  mkBar('chart-login-risk', riskLabels, riskData,
+    riskData.map(r => riskColor(r)), 'Final Risk');
+
+  // table
+  const tb = document.getElementById('login-table');
+  tb.innerHTML = evs.length ? [...evs].reverse().slice(0,50).map(e => `
+    <tr>
+      <td>${fmt(e.timestamp)}</td>
+      <td>${e.user_id||'—'}</td>
+      <td>${e.event_name||'—'}</td>
+      <td>${e.source_ip||'—'}</td>
+      <td>${severityBadge(e.severity)}</td>
+      <td style="color:${riskColor(e.ml_login_risk||0)}">${e.ml_login_risk||0}</td>
+      <td>${riskBar(e.final_risk)}</td>
+      <td style="color:${trustColor(e.trust_score)}">${e.trust_score??'—'}</td>
+    </tr>`).join('') : '<tr><td colspan="8" class="no-data">No login events yet</td></tr>';
+}
+
+// ── Network ───────────────────────────────────────────────────────────────────
+async function refreshNetwork() {
+  const evs = await fetch(API + '/events/network').then(r => r.json()).catch(() => []);
+
+  const dns   = evs.filter(e => e.event_name === 'dns').length;
+  const http  = evs.filter(e => e.event_name === 'http').length;
+  const flow  = evs.filter(e => e.event_name === 'flow').length;
+  const alert = evs.filter(e => e.event_name === 'alert').length;
+
+  document.getElementById('net-dns').textContent   = dns;
+  document.getElementById('net-http').textContent  = http;
+  document.getElementById('net-flow').textContent  = flow;
+  document.getElementById('net-alert').textContent = alert;
+
+  mkDoughnut('chart-net-types',
+    ['DNS', 'HTTP', 'Flow', 'Alert', 'Other'],
+    [dns, http, flow, alert, evs.length - dns - http - flow - alert],
+    ['#60a5fa','#34d399','#a78bfa','#f87171','#fbbf24']
+  );
+
+  const riskLabels = evs.slice(-30).map((_,i) => i+1+'');
+  const riskData   = evs.slice(-30).map(e => e.final_risk||0);
+  mkLine('chart-net-risk', riskLabels, riskData, '#60a5fa', 'Risk');
+
+  const tb = document.getElementById('network-table');
+  tb.innerHTML = evs.length ? [...evs].reverse().slice(0,50).map(e => `
+    <tr>
+      <td>${fmt(e.timestamp)}</td>
+      <td>${e.event_name||'—'}</td>
+      <td>${e.source_ip||'—'}</td>
+      <td>${e.raw_message ? truncate(e.raw_message,20) : '—'}</td>
+      <td>${e.frontend_message ? truncate(e.frontend_message,25) : '—'}</td>
+      <td>${severityBadge(e.severity)}</td>
+      <td style="color:${riskColor(e.ml_network_risk||0)}">${e.ml_network_risk||0}</td>
+      <td>${riskBar(e.final_risk)}</td>
+    </tr>`).join('') : '<tr><td colspan="8" class="no-data">No network events yet</td></tr>';
+}
+
+// ── Endpoint ──────────────────────────────────────────────────────────────────
+async function refreshEndpoint() {
+  const evs = await fetch(API + '/events/endpoint').then(r => r.json()).catch(() => []);
+
+  const sudo = evs.filter(e => e.event_name === 'sudo_command').length;
+  const fw   = evs.filter(e => e.event_name === 'firewall_change').length;
+  const uniUsers = new Set(evs.map(e => e.user_id)).size;
+  const highRisk = evs.filter(e => (e.final_risk||0) >= 60).length;
+
+  document.getElementById('ep-sudo').textContent    = sudo;
+  document.getElementById('ep-fw').textContent      = fw;
+  document.getElementById('ep-users').textContent   = uniUsers;
+  document.getElementById('ep-highrisk').textContent = highRisk;
+
+  const types = {};
+  evs.forEach(e => { types[e.event_name||'unknown'] = (types[e.event_name||'unknown']||0)+1; });
+  mkDoughnut('chart-ep-types', Object.keys(types), Object.values(types),
+    ['#fbbf24','#f87171','#60a5fa','#34d399']);
+
+  const userRisk = {};
+  evs.forEach(e => {
+    const u = e.user_id || 'unknown';
+    userRisk[u] = Math.max(userRisk[u]||0, e.final_risk||0);
+  });
+  mkBar('chart-ep-users', Object.keys(userRisk), Object.values(userRisk),
+    Object.values(userRisk).map(r => riskColor(r)), 'Max Risk');
+
+  const tb = document.getElementById('endpoint-table');
+  tb.innerHTML = evs.length ? [...evs].reverse().slice(0,50).map(e => `
+    <tr>
+      <td>${fmt(e.timestamp)}</td>
+      <td>${e.user_id||'—'}</td>
+      <td>${e.event_name||'—'}</td>
+      <td><code style="font-size:11px;color:#94a3b8">${truncate(e.raw_message||'—', 45)}</code></td>
+      <td>${severityBadge(e.severity)}</td>
+      <td style="color:${riskColor(e.ml_endpoint_risk||0)}">${e.ml_endpoint_risk||0}</td>
+      <td>${riskBar(e.final_risk)}</td>
+      <td style="color:${trustColor(e.trust_score)}">${e.trust_score??'—'}</td>
+    </tr>`).join('') : '<tr><td colspan="8" class="no-data">No endpoint events yet</td></tr>';
+}
+
+// ── Users ─────────────────────────────────────────────────────────────────────
+async function refreshUsers() {
+  const data = await fetch(API + '/users').then(r => r.json()).catch(() => ({}));
+  const entries = Object.entries(data);
+
+  // cards
+  const grid = document.getElementById('user-cards');
+  grid.innerHTML = entries.length ? entries.map(([uid, u]) => {
+    const score = u.trust_score ?? 100;
+    const status = u.status || 'trusted';
+    const color = trustColor(score);
+    return `
+      <div class="user-card">
+        <div class="user-name">${uid}</div>
+        <div class="user-status status-${status}">${status.toUpperCase()}</div>
+        <div class="trust-bar-bg">
+          <div class="trust-bar-fill" style="width:${score}%;background:${color}"></div>
+        </div>
+        <div class="trust-score-label">Trust: <strong style="color:${color}">${score}</strong> / 100</div>
+      </div>`;
+  }).join('') : '<div class="no-data">No users tracked yet</div>';
+
+  // table
+  const tb = document.getElementById('users-table');
+  tb.innerHTML = entries.length ? entries.map(([uid, u]) => `
+    <tr>
+      <td><strong>${uid}</strong></td>
+      <td>
+        <span style="color:${trustColor(u.trust_score??100)};font-weight:600">${u.trust_score??100}</span>
+        /100
+      </td>
+      <td><span class="badge ${u.status==='trusted'?'badge-low':u.status==='watch'?'badge-medium':'badge-high'}">${u.status||'trusted'}</span></td>
+      <td>${u.event_count??0}</td>
+      <td>${u.last_event||'—'}</td>
+      <td>${riskBar(u.last_risk)}</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="no-data">No users tracked yet</td></tr>';
+}
+
+// ── Auto-refresh ──────────────────────────────────────────────────────────────
+function refreshAll() {
+  refreshOverview();
+  refreshLogin();
+  refreshNetwork();
+  refreshEndpoint();
+  refreshUsers();
+}
+
+refreshAll();
+setInterval(refreshAll, 5000);
+</script>
+</body>
+</html>
