@@ -5,15 +5,27 @@ from pathlib import Path
 import joblib
 
 from feature_mapper import map_event_to_features
+from network_feature_mapper import map_network_event_to_features
+from endpoint_feature_mapper import map_endpoint_event_to_features
 
 app = FastAPI(title="BLATS Backend")
 
-MODEL_PATH = Path(r"C:\BLATS\backend\models\login_model.pkl")
+_MODEL_DIR = Path(__file__).parent / "models"
 
-login_model = joblib.load(MODEL_PATH)
+login_model = joblib.load(_MODEL_DIR / "login_model.pkl")
 
-users = {}
-events = []
+_network_model_path = _MODEL_DIR / "network_model.pkl"
+network_model = joblib.load(_network_model_path) if _network_model_path.exists() else None
+
+_endpoint_model_path = _MODEL_DIR / "endpoint_model.pkl"
+endpoint_model = joblib.load(_endpoint_model_path) if _endpoint_model_path.exists() else None
+
+users: Dict[str, Any] = {}
+events: list = []
+
+_LOGIN_EVENTS = {"login_success", "gui_login_success", "gui_logout", "login_failed"}
+_NETWORK_EVENTS = {"dns", "http", "flow", "alert", "tls"}
+_ENDPOINT_EVENTS = {"sudo_command", "firewall_change"}
 
 
 class LogstashEvent(BaseModel):
@@ -27,49 +39,73 @@ class LogstashEvent(BaseModel):
     frontend_message: Optional[str] = None
     message: Optional[str] = None
     timestamp: Optional[str] = None
+
     class Config:
         extra = "allow"
 
 
+# ---------------------------------------------------------------------------
+# Rule-based risk
+# ---------------------------------------------------------------------------
+
+_RULE_RISK_TABLE = {
+    "login_failed": 45,
+    "login_success": 5,
+    "gui_login_success": 5,
+    "gui_logout": 0,
+    "sudo_command": 55,
+    "firewall_change": 75,
+    "alert": 85,
+    "dns": 10,
+    "http": 10,
+    "flow": 10,
+}
+
+
 def rule_risk(event: Dict[str, Any]) -> int:
-    event_name = event.get("event_name")
+    return _RULE_RISK_TABLE.get(event.get("event_name"), 5)
 
-    if event_name == "login_failed":
-        return 45
-    if event_name == "login_success":
-        return 5
-    if event_name == "gui_login_success":
-        return 5
-    if event_name == "gui_logout":
-        return 0
-    if event_name == "sudo_command":
-        return 55
-    if event_name == "firewall_change":
-        return 75
-    if event_name == "alert":
-        return 85
-    if event_name in ["dns", "http", "flow"]:
-        return 10
 
-    return 5
-
+# ---------------------------------------------------------------------------
+# ML risk per category
+# ---------------------------------------------------------------------------
 
 def ml_login_risk(event: Dict[str, Any]) -> int:
-    event_name = event.get("event_name")
-
-    if event_name not in ["login_success", "gui_login_success", "gui_logout"]:
+    if event.get("event_name") not in _LOGIN_EVENTS:
+        return 0
+    try:
+        features = map_event_to_features(event)
+        pred = login_model.predict(features)[0]
+        return 60 if pred == -1 else 5
+    except Exception:
         return 0
 
-    features = map_event_to_features(event)
 
-    prediction = login_model.predict(features)[0]
-    score = login_model.decision_function(features)[0]
+def ml_network_risk(event: Dict[str, Any]) -> int:
+    if event.get("event_name") not in _NETWORK_EVENTS or network_model is None:
+        return 0
+    try:
+        features = map_network_event_to_features(event)
+        pred = network_model.predict(features)[0]
+        return 65 if pred == -1 else 5
+    except Exception:
+        return 0
 
-    if prediction == -1:
-        return 60
 
-    return 5
+def ml_endpoint_risk(event: Dict[str, Any]) -> int:
+    if event.get("event_name") not in _ENDPOINT_EVENTS or endpoint_model is None:
+        return 0
+    try:
+        features = map_endpoint_event_to_features(event)
+        pred = endpoint_model.predict(features)[0]
+        return 70 if pred == -1 else 10
+    except Exception:
+        return 0
 
+
+# ---------------------------------------------------------------------------
+# Trust score engine
+# ---------------------------------------------------------------------------
 
 def update_trust(user_id: str, final_risk: int, event: Dict[str, Any]) -> int:
     if user_id not in users:
@@ -78,12 +114,11 @@ def update_trust(user_id: str, final_risk: int, event: Dict[str, Any]) -> int:
             "status": "trusted",
             "event_count": 0,
             "last_event": None,
-            "last_risk": 0
+            "last_risk": 0,
         }
 
     user = users[user_id]
-
-    trust_impact = event.get("trust_impact", 0) or 0
+    trust_impact = event.get("trust_impact") or 0
 
     if final_risk >= 80:
         trust_change = -25
@@ -96,9 +131,7 @@ def update_trust(user_id: str, final_risk: int, event: Dict[str, Any]) -> int:
     else:
         trust_change = -2
 
-    new_score = user["trust_score"] + trust_change
-    new_score = max(0, min(100, new_score))
-
+    new_score = max(0, min(100, user["trust_score"] + trust_change))
     user["trust_score"] = new_score
     user["event_count"] += 1
     user["last_event"] = event.get("event_name")
@@ -114,24 +147,35 @@ def update_trust(user_id: str, final_risk: int, event: Dict[str, Any]) -> int:
     return new_score
 
 
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
 @app.get("/")
 def home():
     return {
         "status": "BLATS backend running",
-        "model_loaded": MODEL_PATH.exists()
+        "models": {
+            "login": True,
+            "network": network_model is not None,
+            "endpoint": endpoint_model is not None,
+        },
     }
 
 
 @app.post("/events")
 def receive_event(event: LogstashEvent):
     event_dict = event.dict()
-
     user_id = event.user_id or "unknown"
 
     r_risk = rule_risk(event_dict)
-    m_risk = ml_login_risk(event_dict)
+    m_login = ml_login_risk(event_dict)
+    m_network = ml_network_risk(event_dict)
+    m_endpoint = ml_endpoint_risk(event_dict)
 
-    final_risk = int((0.5 * r_risk) + (0.5 * m_risk))
+    # Only non-zero ML score contributes; rule weight 50%, ML weight 50%
+    ml_risk = m_login or m_network or m_endpoint
+    final_risk = int(0.5 * r_risk + 0.5 * ml_risk)
 
     trust_score = update_trust(user_id, final_risk, event_dict)
 
@@ -141,7 +185,9 @@ def receive_event(event: LogstashEvent):
         "category": event.blats_category,
         "severity": event.severity,
         "rule_risk": r_risk,
-        "ml_risk": m_risk,
+        "ml_login_risk": m_login,
+        "ml_network_risk": m_network,
+        "ml_endpoint_risk": m_endpoint,
         "final_risk": final_risk,
         "trust_score": trust_score,
         "frontend_message": event.frontend_message,
@@ -151,11 +197,7 @@ def receive_event(event: LogstashEvent):
     }
 
     events.append(output)
-
-    return {
-        "status": "received",
-        "result": output
-    }
+    return {"status": "received", "result": output}
 
 
 @app.get("/users")
@@ -174,5 +216,5 @@ def dashboard():
         "total_users": len(users),
         "total_events": len(events),
         "users": users,
-        "recent_events": events[-20:]
+        "recent_events": events[-20:],
     }
