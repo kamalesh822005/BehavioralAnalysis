@@ -52,7 +52,8 @@ def map_endpoint_event_to_features(event: dict) -> pd.DataFrame:
     event_name = event.get("event_name", "")
     is_firewall_change = int(event_name == "firewall_change")
 
-    command = event.get("message", "") or ""
+    # Logstash grok extracts the command into "command"; fall back to raw message
+    command = event.get("command") or event.get("message", "") or ""
     command_type = "sudo_firewall" if is_firewall_change else _categorize(command)
 
     key = (user, dt.date())
